@@ -4,7 +4,11 @@ version = "0.1.0"
 description = "Sensemaking 2026 Shared Task using HPLT models."
 readme = "README.md"
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "scikit-learn>=1.9.0",
+    "torch>=2.13.0",
+    "transformers>=5.14.1",
+]
 
 [dependency-groups]
 dev = [
