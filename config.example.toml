@@ -1,6 +1,6 @@
 eval_path = "path/to/devset.json"
 track = "simple"      # "simple" (labels 0-4) or "rubric" (labels 0-2)
-langs = ["en"]        # languages to keep; [] = all
+langs = ["en"]        # languages to keep; [] or not specified = all
 
 # which model to run (a description of each architecture can be found in the report):
 #   baselines (no finetuning):
@@ -21,4 +21,4 @@ max_length = 512
 batch_size = 16
 device = "cuda"
 output_dir = "results"  # where to store the results
-limit = 32              # how much records to run, remove for full run
+limit = 32              # how much records to run; 0 or not specified = full run
