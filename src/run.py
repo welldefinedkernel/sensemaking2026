@@ -133,6 +133,7 @@ def predict(
     labels = TRACK_LABELS[track]
     bs = cfg["batch_size"]
 
+    results: list[dict[str, Any]] = []
     for lang, subset in dataset.items():
         ckpt = checkpoint_id(model_sel, lang)
         print(f"Loading {ckpt} on {device} ...")
@@ -146,7 +147,6 @@ def predict(
         digit_ids = digit_token_ids(tokenizer, track)
         mask_id = tokenizer.mask_token_id
 
-        results: list[dict[str, Any]] = []
         for start in range(0, len(subset), bs):
             batch = subset[start : start + bs]
             prompts = [
