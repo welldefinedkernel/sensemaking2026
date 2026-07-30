@@ -5,8 +5,8 @@ langs = ["en"]        # languages to keep; [] or not specified = all
 # which model to run (a description of each architecture can be found in the report):
 #   baselines (no finetuning):
 #       "2.0/mlm" 
-#       "3.0/gpt_bert/mlm"
 #       "3.0/gpt_bert/e2e"
+#       "3.0/gpt_bert/mlm"
 #       "3.0/t5/e2e"
 #   finetuning:
 #       "2.0/cls"

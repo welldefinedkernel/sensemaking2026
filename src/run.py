@@ -34,7 +34,8 @@ LANG_TO_ISO3_SCRIPT: dict[str, tuple[str, str]] = {
 TRACK_LABELS = {"simple": [0, 1, 2, 3, 4], "rubric": [0, 1, 2]}
 MODEL_CHECKPOINTS = {
     "2.0/mlm": "HPLT/hplt_bert_base_2_0_{iso3}-{script}",
-    "3.0/gpt_bert/": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
+    "3.0/gpt_bert/e2e": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
+    "3.0/gpt_bert/mlm": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
     "3.0/t5/": "HPLT/hplt_t5_base_3_0_{iso3}_{script}",
 }
 
