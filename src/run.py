@@ -13,6 +13,7 @@ import torch
 
 from collections import defaultdict
 from pathlib import Path
+from prompt import build_prompt
 from transformers import AutoModelForMaskedLM, AutoTokenizer
 from typing import Any
 
@@ -88,25 +89,6 @@ def load_dataset(
     return subsets
 
 
-def build_prompt(inp: dict[str, Any], track: str, mask_token: str) -> str:
-    """Build a prompt for a given input based on the current track."""
-    parts = [
-        f"Context: {inp.get('context', '')}",
-        f"Question: {inp.get('question', '')}",
-    ]
-    if track == "rubric":
-        r = inp.get("rubrics", {})
-        parts.append(
-            "Rubric:\n"
-            f"0 (No Credit): {r.get('NC', '')}\n"
-            f"1 (Partial Credit): {r.get('PC', '')}\n"
-            f"2 (Full Credit): {r.get('FC', '')}"
-        )
-    parts.append(f"Answer: {inp.get('answer', '')}")
-    parts.append(f"The chosen label is: {mask_token}")
-    return "\n".join(parts)
-
-
 def digit_token_ids(tokenizer, track: str) -> list[int]:
     """Token id for each candidate digit; each must map to a single token."""
     ids = []
@@ -152,7 +134,9 @@ def predict(
             batch = subset[start : start + bs]
             prompts = [
                 build_prompt(
-                    inp=it["input"], track=track, mask_token=tokenizer.mask_token
+                    name=cfg["prompt"],
+                    inp=it["input"],
+                    mask_token=tokenizer.mask_token,
                 )
                 for it in batch
             ]
@@ -190,7 +174,7 @@ def main() -> None:
 
     with open(args.config, "rb") as f:
         cfg = tomllib.load(f)
-    assert all(item in cfg for item in ["eval_path", "track", "model"])
+    assert all(item in cfg for item in ["eval_path", "track", "prompt", "model"])
 
     dataset = load_dataset(
         path=cfg["eval_path"], langs=cfg.get("langs", []), limit=cfg.get("limit", 0)
