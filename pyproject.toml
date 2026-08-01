@@ -5,6 +5,7 @@ description = "Sensemaking 2026 Shared Task using HPLT models."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
+    "deep-translator>=1.11.4",
     "scikit-learn>=1.9.0",
     "torch>=2.13.0",
     "transformers>=4.57.6,<5",

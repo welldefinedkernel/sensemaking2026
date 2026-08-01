@@ -14,7 +14,7 @@ import torch
 from collections import defaultdict
 from pathlib import Path
 from prompt import build_prompt
-from transformers import AutoModelForMaskedLM, AutoTokenizer
+from transformers import AutoModelForCausalLM, AutoModelForMaskedLM, AutoTokenizer
 from typing import Any
 
 LANG_TO_ISO3_SCRIPT: dict[str, tuple[str, str]] = {
@@ -100,17 +100,58 @@ def digit_token_ids(tokenizer, track: str) -> list[int]:
     return ids
 
 
-@torch.no_grad()
-def predict(
-    cfg: dict[str, Any], dataset: dict[str, list[dict[str, Any]]]
-) -> list[dict[str, Any]]:
-    """Predict labels for one language subset."""
-    device = cfg["device"]
+def fit_prompt(
+    name: str,
+    inp: dict[str, Any],
+    mask_token: str,
+    tokenizer,
+    max_length: int,
+) -> str:
+    """Build a prompt, right-truncating only the context so it fits."""
+    prompt = build_prompt(name, inp, mask_token)
+    if len(tokenizer(prompt).input_ids) <= max_length:
+        return prompt
+
+    # Cost of everything except the context text
+    overhead = len(
+        tokenizer(build_prompt(name, {**inp, "context": ""}, mask_token)).input_ids
+    )
+
+    # Small margin
+    budget = max_length - overhead - 8
+    if budget <= 0:
+        # Non-context parts already fit
+        return prompt
+
+    ctx_ids = tokenizer(inp.get("context", ""), add_special_tokens=False).input_ids
+    kept_ctx = tokenizer.decode(ctx_ids[:budget], skip_special_tokens=True)
+    return build_prompt(name, {**inp, "context": kept_ctx}, mask_token)
+
+
+def translate_prompt(prompt: str, lang: str) -> str:
+    """Translate a prompt into the sample's language via Google Translate."""
+    if lang == "en":
+        return prompt
+    from deep_translator import GoogleTranslator
+
+    return GoogleTranslator(source="auto", target=lang).translate(prompt)
+
+
+def resolve_device(cfg: dict[str, Any]) -> str:
+    """Fall back to CPU when the requested accelerator is unavailable."""
+    device = cfg.get("device", "cpu")
     if device.startswith("cuda") and not torch.cuda.is_available():
         device = "cpu"
     if device.startswith("mps") and not torch.mps.is_available():
         device = "cpu"
+    return device
 
+
+@torch.no_grad()
+def predict_mlm(
+    cfg: dict[str, Any], dataset: dict[str, list[dict[str, Any]]], device: str
+) -> list[dict[str, Any]]:
+    """Masked-LM: score digit logits at the mask position."""
     track = cfg["track"]
     model_sel = cfg["model"]
     labels = TRACK_LABELS[track]
@@ -119,7 +160,7 @@ def predict(
     results: list[dict[str, Any]] = []
     for lang, subset in dataset.items():
         ckpt = checkpoint_id(model_sel, lang)
-        print(f"Loading {ckpt} on {device} ...")
+        print(f"Loading {ckpt} (mlm) on {device} ...")
         tokenizer = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
         tokenizer.truncation_side = "left"  # we do not want to truncate away [MASK]
         load_kwargs: dict[str, Any] = {"trust_remote_code": True}
@@ -133,18 +174,19 @@ def predict(
         for start in range(0, len(subset), bs):
             batch = subset[start : start + bs]
             prompts = [
-                build_prompt(
+                fit_prompt(
                     name=cfg["prompt"],
                     inp=it["input"],
                     mask_token=tokenizer.mask_token,
+                    tokenizer=tokenizer,
+                    max_length=cfg["max_length"],
                 )
                 for it in batch
             ]
+            prompts = [translate_prompt(p, lang) for p in prompts]
             enc = tokenizer(
                 prompts,
                 padding=True,
-                truncation=True,
-                max_length=cfg["max_length"],
                 return_tensors="pt",
             ).to(device)
             logits = model(**enc).logits  # [B, T, V]
@@ -165,6 +207,88 @@ def predict(
                     }
                 )
     return results
+
+
+@torch.no_grad()
+def predict_causal(
+    cfg: dict[str, Any], dataset: dict[str, list[dict[str, Any]]], device: str
+) -> list[dict[str, Any]]:
+    """Causal-LM: score digit logits at the next-token position."""
+    track = cfg["track"]
+    model_sel = cfg["model"]
+    labels = TRACK_LABELS[track]
+    bs = cfg["batch_size"]
+
+    results: list[dict[str, Any]] = []
+    for lang, subset in dataset.items():
+        ckpt = checkpoint_id(model_sel, lang)
+        print(f"Loading {ckpt} (e2e) on {device} ...")
+        tokenizer = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
+        tokenizer.truncation_side = "left"  # keep the trailing prompt intact
+        tokenizer.padding_side = "right"  # last real token sits at attn_mask.sum()-1
+        load_kwargs: dict[str, Any] = {"trust_remote_code": True}
+        load_kwargs["use_safetensors"] = False
+        model: Any = AutoModelForCausalLM.from_pretrained(ckpt, **load_kwargs)
+        model.to(device)
+        model.eval()
+
+        digit_ids = digit_token_ids(tokenizer, track)
+
+        for start in range(0, len(subset), bs):
+            batch = subset[start : start + bs]
+            prompts = [
+                fit_prompt(
+                    name=cfg["prompt"],
+                    inp=it["input"],
+                    mask_token="",
+                    tokenizer=tokenizer,
+                    max_length=cfg["max_length"],
+                )
+                for it in batch
+            ]
+            if cfg.get("translate", False):
+                prompts = [translate_prompt(p, lang) for p in prompts]
+            enc = tokenizer(
+                prompts,
+                padding=True,
+                return_tensors="pt",
+            ).to(device)
+            logits = model(**enc).logits  # [B, T, V]
+            prediction = model.generate(
+                enc.input_ids,
+                do_sample=False,
+                eos_token_id=tokenizer.eos_token_id
+            )
+            print(tokenizer.decode(prediction[0]).strip())
+
+            for row, it in enumerate(batch):
+                pos = int(enc["attention_mask"][row].sum().item()) - 1
+                probs = torch.softmax(logits[row, pos, digit_ids], dim=-1)
+                idx = int(torch.argmax(probs).item())
+                results.append(
+                    {
+                        "id": it["id"],
+                        "label": labels[idx],
+                        "misc": {"model": ckpt, "probs": probs.tolist()},
+                    }
+                )
+    return results
+
+
+def predict(
+    cfg: dict[str, Any], dataset: dict[str, list[dict[str, Any]]]
+) -> list[dict[str, Any]]:
+    """Choose inference method using the last `model` field segment."""
+    device = resolve_device(cfg)
+    method = cfg["model"].split("/")[-1]
+    print(f"Predicting with {method} on {device} ...")
+    if method == "mlm":
+        return predict_mlm(cfg, dataset, device)
+    if method == "e2e":
+        return predict_causal(cfg, dataset, device)
+    raise NotImplementedError(
+        f"inference method={method!r} is not implemented, check example config'"
+    )
 
 
 def main() -> None:
