@@ -254,12 +254,6 @@ def predict_causal(
                 return_tensors="pt",
             ).to(device)
             logits = model(**enc).logits  # [B, T, V]
-            prediction = model.generate(
-                enc.input_ids,
-                do_sample=False,
-                eos_token_id=tokenizer.eos_token_id
-            )
-            print(tokenizer.decode(prediction[0]).strip())
 
             for row, it in enumerate(batch):
                 pos = int(enc["attention_mask"][row].sum().item()) - 1
@@ -308,7 +302,7 @@ def main() -> None:
     )
 
     preds = predict(cfg, dataset)
-    out_dir = Path(cfg["output_dir"]) / cfg["track"] / cfg["model"].replace("/", "_")
+    out_dir = Path(cfg["output_dir"]) / cfg["track"] / cfg["model"].replace("/", "_") / cfg["prompt"].split("/")[-1]
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "predictions.json").write_text(
         json.dumps(preds, indent=2, ensure_ascii=False), encoding="utf-8"
