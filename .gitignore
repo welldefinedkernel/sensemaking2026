@@ -15,11 +15,5 @@ wheels/
 # Data
 data/
 
-# Results
-results/
-
-# Config files
-configs/
-
 # Local agent files
 .github/

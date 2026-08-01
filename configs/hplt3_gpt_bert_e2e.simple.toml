@@ -1,0 +1,11 @@
+eval_path = "data/devset/dev.simple.json"
+track = "simple"
+langs = ["en"]
+
+model = "3.0/gpt_bert/e2e"      
+max_length = 512 
+
+batch_size = 16
+device = "cuda"
+output_dir = "results"
+limit = 32
