@@ -1,12 +1,13 @@
 eval_path = "path/to/devset.json"
-track = "simple"      # "simple" (labels 0-4) or "rubric" (labels 0-2)
-langs = ["en"]        # languages to keep; [] or not specified = all
+track = "simple"                # "simple" (labels 0-4) or "rubric" (labels 0-2)
+prompt = "simple/zero_shot"     # prompt builder from src/prompt.py
+langs = ["en"]                  # languages to keep; [] or not specified = all
 
 # which model to run (a description of each architecture can be found in the report):
 #   baselines (no finetuning):
 #       "2.0/mlm" 
-#       "3.0/gpt_bert/mlm"
 #       "3.0/gpt_bert/e2e"
+#       "3.0/gpt_bert/mlm"
 #       "3.0/t5/e2e"
 #   finetuning:
 #       "2.0/cls"
