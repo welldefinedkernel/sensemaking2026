@@ -1,0 +1,11 @@
+train_path = "data/trainset/train.simple.json"
+eval_path = "data/devset/dev.simple.json"
+track = "simple"
+prompt = "simple/zero_shot"
+
+model = "2.0/cls"      
+max_length = 512 
+
+batch_size = 64
+device = "cuda"
+output_dir = "results"
