@@ -2,9 +2,9 @@ eval_path = "data/devset/dev.simple.json"
 track = "simple"
 prompt = "simple/zero_shot"
 
-model = "2.0/mlm"      
-max_length = 512 
+model = "2.0/mlm"
+max_length = 512
 
-batch_size = 64
+batch_size = 16
 device = "cuda"
 output_dir = "results"

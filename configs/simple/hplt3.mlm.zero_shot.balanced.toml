@@ -1,0 +1,10 @@
+eval_path = "data/balanced/dev.simple.json"
+track = "simple"
+prompt = "simple/zero_shot"
+
+model = "3.0/gpt_bert/mlm"
+max_length = 16384
+
+batch_size = 4
+device = "cuda"
+output_dir = "results"
