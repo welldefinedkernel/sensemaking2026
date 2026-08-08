@@ -147,8 +147,19 @@ RUBRIC_LEVELS = [
     ("FC", "2 (Full Credit):"),
 ]
 
+# Task description shown to the model: what the score means and how to pick it
+RUBRIC_INSTRUCTION = (
+    "You grade how well an Answer responds to the Question given the Context,\n"
+    "following the Rubric written for this Question.\n"
+    "Choose exactly one label on a 0-2 scale:\n"
+    "0: the Answer meets the No Credit criterion.\n"
+    "1: the Answer meets the Partial Credit criterion.\n"
+    "2: the Answer meets the Full Credit criterion."
+)
 
-def rubric_prompt_zero_shot(inp: dict[str, Any], mask_token: str, lang: str) -> str:
+
+def _rubric_block(inp: dict[str, Any], mask_token: str, lang: str) -> str:
+    """The fields of a single graded item, without the task instruction."""
     rubrics = inp.get("rubrics", {})
     rubric_block = "\n".join(
         [translate(RUBRIC_LABEL, lang)]
@@ -165,10 +176,70 @@ def rubric_prompt_zero_shot(inp: dict[str, Any], mask_token: str, lang: str) -> 
     )
 
 
+def rubric_prompt_zero_shot(inp: dict[str, Any], mask_token: str, lang: str) -> str:
+    instruction = translate_lines(RUBRIC_INSTRUCTION, lang)
+    return f"{instruction}\n\n{_rubric_block(inp, mask_token, lang)}"
+
+
+# One worked demonstration per label, authored in English
+RUBRIC_EXAMPLE_RUBRICS: dict[str, str] = {
+    "NC": "The answer gives no temperature, or one that contradicts the Context.",
+    "PC": "The answer refers to boiling or heat but not to 100 degrees Celsius.",
+    "FC": "The answer states 100 degrees Celsius.",
+}
+RUBRIC_LABEL_EXAMPLES: list[dict[str, str]] = [
+    {
+        "context": "Water boils at 100 degrees Celsius at sea level.",
+        "question": "At what temperature does water boil at sea level?",
+        "answer": "Water never boils; it only freezes.",
+        "label": "0",
+    },
+    {
+        "context": "Water boils at 100 degrees Celsius at sea level.",
+        "question": "At what temperature does water boil at sea level?",
+        "answer": "It boils once it gets hot enough.",
+        "label": "1",
+    },
+    {
+        "context": "Water boils at 100 degrees Celsius at sea level.",
+        "question": "At what temperature does water boil at sea level?",
+        "answer": "100 degrees Celsius at sea level.",
+        "label": "2",
+    },
+]
+
+
+@lru_cache(maxsize=None)
+def _rubric_preamble(lang: str) -> str:
+    """Instruction + one worked example per label, translated once per language."""
+    rubrics = {k: translate(v, lang) for k, v in RUBRIC_EXAMPLE_RUBRICS.items()}
+    examples = [
+        _rubric_block(
+            {
+                "context": translate(ex["context"], lang),
+                "question": translate(ex["question"], lang),
+                "answer": translate(ex["answer"], lang),
+                "rubrics": rubrics,
+            },
+            ex["label"],
+            lang,
+        )
+        for ex in RUBRIC_LABEL_EXAMPLES
+    ]
+    return "\n\n".join([translate_lines(RUBRIC_INSTRUCTION, lang), *examples])
+
+
+def rubric_prompt_examples(inp: dict[str, Any], mask_token: str, lang: str) -> str:
+    """Few-shot prompt: cached instruction + examples, plus the current query."""
+    query = _rubric_block(inp, mask_token, lang)
+    return f"{_rubric_preamble(lang)}\n\n{query}"
+
+
 PROMPTS: dict[str, PromptBuilder] = {
     "simple/zero_shot": simple_prompt_zero_shot,
     "simple/examples": simple_prompt_examples,
     "rubric/zero_shot": rubric_prompt_zero_shot,
+    "rubric/examples": rubric_prompt_examples,
 }
 
 
