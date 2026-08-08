@@ -11,19 +11,19 @@ import json
 import random
 import sys
 import tomllib
-import torch
-
 from collections import defaultdict
 from pathlib import Path
-from prompt import build_prompt
+from typing import Any
+
+import torch
 from transformers import (
     AutoModelForCausalLM,
     AutoModelForMaskedLM,
     AutoModelForSequenceClassification,
     AutoTokenizer,
 )
-from typing import Any
 
+from prompt import build_prompt
 
 LANG_TO_ISO3_SCRIPT: dict[str, tuple[str, str]] = {
     "en": ("eng", "Latn"),
@@ -125,7 +125,9 @@ def fit_prompt(
 
     # Cost of everything except the context text
     overhead = len(
-        tokenizer(build_prompt(name, {**inp, "context": ""}, mask_token, lang)).input_ids
+        tokenizer(
+            build_prompt(name, {**inp, "context": ""}, mask_token, lang)
+        ).input_ids
     )
 
     # Small margin
@@ -258,7 +260,9 @@ def finetune(
 
     # backward keeps every layer's attention matrix, which is O(seq_len^2); recompute
     # them instead so full-length prompts fit
-    if cfg.get("gradient_checkpointing", True) and hasattr(model, "gradient_checkpointing"):
+    if cfg.get("gradient_checkpointing", True) and hasattr(
+        model, "gradient_checkpointing"
+    ):
         model.gradient_checkpointing = True
 
     model.train()
@@ -290,7 +294,10 @@ def resolve_device(cfg: dict[str, Any]) -> str:
 
 @torch.no_grad()
 def predict_mlm(
-    cfg: dict[str, Any], dataset: dict[str, list[dict[str, Any]]], device: str, train_dataset: dict[str, list[dict[str, Any]]] | None = None
+    cfg: dict[str, Any],
+    dataset: dict[str, list[dict[str, Any]]],
+    device: str,
+    train_dataset: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
     """Masked-LM: score digit logits at the mask position."""
     track = cfg["track"]
@@ -311,7 +318,6 @@ def predict_mlm(
 
         if train_dataset:
             print(f"Finetuning {ckpt} on {len(train_dataset[lang])} items ...")
-            
 
         digit_ids = digit_token_ids(tokenizer, track)
         mask_id = tokenizer.mask_token_id
@@ -386,7 +392,9 @@ def predict_causal(
 
         if train_dataset:
             print(f"Finetuning {ckpt} on {len(train_dataset[lang])} items ...")
-            tokenizer.padding_side = "right"  # the digit sits at the end of the real tokens
+            tokenizer.padding_side = (
+                "right"  # the digit sits at the end of the real tokens
+            )
             finetune(
                 model,
                 cfg,
@@ -417,9 +425,7 @@ def predict_causal(
 
             prompt_len = enc["input_ids"].shape[1]
             for row, it in enumerate(batch):
-                text = tokenizer.decode(
-                    out[row, prompt_len:], skip_special_tokens=True
-                )
+                text = tokenizer.decode(out[row, prompt_len:], skip_special_tokens=True)
                 digit = parse_digit(text, labels)
                 results.append(
                     {
@@ -508,7 +514,7 @@ def predict_cls(
 
 
 def predict(
-    cfg: dict[str, Any], 
+    cfg: dict[str, Any],
     dataset: dict[str, list[dict[str, Any]]],
     train_dataset: dict[str, list[dict[str, Any]]] | None = None,
 ) -> list[dict[str, Any]]:
@@ -557,8 +563,15 @@ def main() -> None:
         f"Loaded {sum([len(subset) for subset in dataset.values()])} items from {cfg['eval_path']} (langs={cfg.get('langs') or 'all'})."
     )
 
-    preds = predict(cfg, dataset, train_dataset if "train_dataset" in locals() else None)
-    out_dir = Path(cfg["output_dir"]) / cfg["track"] / cfg["model"].replace("/", "_") / cfg["prompt"].split("/")[-1]
+    preds = predict(
+        cfg, dataset, train_dataset if "train_dataset" in locals() else None
+    )
+    out_dir = (
+        Path(cfg["output_dir"])
+        / cfg["track"]
+        / cfg["model"].replace("/", "_")
+        / cfg["prompt"].split("/")[-1]
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"{dataset_name(cfg)}.json"
     out_path.write_text(

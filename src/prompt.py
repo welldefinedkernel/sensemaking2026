@@ -2,7 +2,7 @@
 
 import time
 from collections.abc import Callable
-from functools import lru_cache
+from functools import cache
 from typing import Any
 
 PromptBuilder = Callable[[dict[str, Any], str, str], str]
@@ -15,7 +15,7 @@ RUBRIC_LABEL = "Rubric:"
 CHOSEN_LABEL = "The chosen label is:"
 
 
-@lru_cache(maxsize=None)
+@cache
 def translate(text: str, lang: str) -> str:
     """Translate a single prompt component via Google Translate.
 
@@ -117,7 +117,7 @@ SIMPLE_LABEL_EXAMPLES: list[dict[str, str]] = [
 ]
 
 
-@lru_cache(maxsize=None)
+@cache
 def _simple_preamble(lang: str) -> str:
     """Instruction + one worked example per label, translated once per language."""
     examples = [
@@ -209,7 +209,7 @@ RUBRIC_LABEL_EXAMPLES: list[dict[str, str]] = [
 ]
 
 
-@lru_cache(maxsize=None)
+@cache
 def _rubric_preamble(lang: str) -> str:
     """Instruction + one worked example per label, translated once per language."""
     rubrics = {k: translate(v, lang) for k, v in RUBRIC_EXAMPLE_RUBRICS.items()}
