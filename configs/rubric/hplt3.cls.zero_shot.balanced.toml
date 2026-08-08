@@ -1,0 +1,15 @@
+train_path = "data/balanced/train.rubric.json"
+eval_path = "data/balanced/dev.rubric.json"
+track = "rubric"
+prompt = "rubric/zero_shot"
+
+model = "3.0/gpt_bert/cls"
+max_length = 16384
+
+epochs = 2
+lr = 2e-5
+train_batch_size = 2
+
+batch_size = 4
+device = "cuda"
+output_dir = "results"

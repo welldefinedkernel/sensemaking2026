@@ -3,9 +3,13 @@ eval_path = "data/devset/dev.simple.json"
 track = "simple"
 prompt = "simple/zero_shot"
 
-model = "2.0/cls"      
-max_length = 512 
+model = "2.0/cls"
+max_length = 512
 
-batch_size = 64
+epochs = 2
+lr = 2e-5
+train_batch_size = 4
+
+batch_size = 16
 device = "cuda"
 output_dir = "results"
