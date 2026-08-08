@@ -9,13 +9,19 @@ Usage:
 import argparse
 import json
 import random
+import sys
 import tomllib
 import torch
 
 from collections import defaultdict
 from pathlib import Path
 from prompt import build_prompt
-from transformers import AutoModelForCausalLM, AutoModelForMaskedLM, AutoTokenizer
+from transformers import (
+    AutoModelForCausalLM,
+    AutoModelForMaskedLM,
+    AutoModelForSequenceClassification,
+    AutoTokenizer,
+)
 from typing import Any
 
 
@@ -39,6 +45,7 @@ MODEL_CHECKPOINTS = {
     "2.0/mlm": "HPLT/hplt_bert_base_2_0_{iso3}-{script}",
     "2.0/cls": "HPLT/hplt_bert_base_2_0_{iso3}-{script}",
     "3.0/gpt_bert/mlm": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
+    "3.0/gpt_bert/cls": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
     "3.0/gpt_bert/instruction_tune": "HPLT/hplt_gpt_bert_base_3_0_{iso3}_{script}",
     "3.0/t5/instruction_tune": "HPLT/hplt_t5_base_3_0_{iso3}_{script}",
 }
@@ -147,10 +154,10 @@ def dataset_name(cfg: dict[str, Any]) -> str:
     return "balanced" if "balanced" in Path(cfg["eval_path"]).parts else "regular"
 
 
-def causal_prompts(
+def plain_prompts(
     cfg: dict[str, Any], batch: list[dict[str, Any]], tokenizer, lang: str
 ) -> list[str]:
-    """Prompts ending right where the model should emit the label digit."""
+    """Prompts ending right where the label belongs, with no mask token."""
     return [
         fit_prompt(
             name=cfg["prompt"],
@@ -166,7 +173,7 @@ def causal_prompts(
 
 def causal_batch(
     cfg: dict[str, Any], batch: list[dict[str, Any]], tokenizer, lang: str, device: str
-) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+) -> dict[str, torch.Tensor]:
     """Tokenize prompts with the gold digit appended; supervise only that digit."""
     digit_ids = digit_token_ids(tokenizer, cfg["track"])
     label_values = TRACK_LABELS[cfg["track"]]
@@ -174,7 +181,7 @@ def causal_batch(
     rows = [
         tokenizer(prompt, truncation=True, max_length=cfg["max_length"]).input_ids
         + [digit_ids[label_values.index(it["label"])]]
-        for prompt, it in zip(causal_prompts(cfg, batch, tokenizer, lang), batch)
+        for prompt, it in zip(plain_prompts(cfg, batch, tokenizer, lang), batch)
     ]
 
     width = max(len(r) for r in rows)
@@ -186,20 +193,59 @@ def causal_batch(
         attention_mask[i, : len(row)] = 1
         labels[i, len(row) - 1] = row[-1]
 
-    enc = {"input_ids": input_ids.to(device), "attention_mask": attention_mask.to(device)}
-    return enc, labels.to(device)
+    return {
+        "input_ids": input_ids.to(device),
+        "attention_mask": attention_mask.to(device),
+        "labels": labels.to(device),
+    }
 
 
-@torch.enable_grad()  # the caller runs under torch.no_grad()
-def finetune_causal(
+def cls_batch(
+    cfg: dict[str, Any], batch: list[dict[str, Any]], tokenizer, lang: str, device: str
+) -> dict[str, torch.Tensor]:
+    """Tokenize prompts and attach the gold label index for the classifier head."""
+    label_values = TRACK_LABELS[cfg["track"]]
+    enc = tokenizer(
+        plain_prompts(cfg, batch, tokenizer, lang),
+        padding=True,
+        truncation=True,
+        max_length=cfg["max_length"],
+        return_tensors="pt",
+    ).to(device)
+    labels = torch.tensor(
+        [label_values.index(it["label"]) for it in batch], device=device
+    )
+    return {**enc, "labels": labels}
+
+
+class _MaskedSoftmax:
+    """Drop-in for the 2.0 remote code's custom autograd Function, whose backward
+    calls torch._softmax_backward_data with a signature removed years ago."""
+
+    @staticmethod
+    def apply(x, mask, dim):
+        return torch.softmax(x.masked_fill(mask, float("-inf")), dim).masked_fill(
+            mask, 0.0
+        )
+
+
+def patch_masked_softmax(model) -> None:
+    """Make HPLT 2.0 encoders trainable; their forward works but backward raises."""
+    module = sys.modules.get(type(model).__module__)
+    if module is not None and hasattr(module, "MaskedSoftmax"):
+        module.MaskedSoftmax = _MaskedSoftmax
+
+
+@torch.enable_grad()  # the callers run under torch.no_grad()
+def finetune(
     model,
-    tokenizer,
     cfg: dict[str, Any],
     subset: list[dict[str, Any]],
     lang: str,
     device: str,
+    make_batch,
 ) -> None:
-    """Instruction-tune GPT-BERT: cross-entropy on the gold digit token only."""
+    """Fine-tune on the model's own loss; make_batch turns rows into forward kwargs."""
     if not subset:
         raise ValueError(
             f"no training items for lang={lang!r}; the eval set covers a language "
@@ -210,16 +256,17 @@ def finetune_causal(
     bs = cfg.get("train_batch_size", cfg["batch_size"])
     optimizer = torch.optim.AdamW(model.parameters(), lr=cfg.get("lr", 1e-5))
 
-    tokenizer.padding_side = "right"  # the digit sits at the end of the real tokens
+    # backward keeps every layer's attention matrix, which is O(seq_len^2); recompute
+    # them instead so full-length prompts fit
+    if cfg.get("gradient_checkpointing", True) and hasattr(model, "gradient_checkpointing"):
+        model.gradient_checkpointing = True
+
     model.train()
     for epoch in range(epochs):
         random.shuffle(subset)
         total, steps = 0.0, 0
         for start in range(0, len(subset), bs):
-            enc, labels = causal_batch(
-                cfg, subset[start : start + bs], tokenizer, lang, device
-            )
-            loss = model(**enc, labels=labels).loss
+            loss = model(**make_batch(subset[start : start + bs])).loss
             loss.backward()
             optimizer.step()
             optimizer.zero_grad(set_to_none=True)
@@ -229,7 +276,6 @@ def finetune_causal(
         print(f"  epoch {epoch}: mean loss {total / max(steps, 1):.4f}")
 
     model.eval()
-    tokenizer.padding_side = "left"  # generation continues from the last position
 
 
 def resolve_device(cfg: dict[str, Any]) -> str:
@@ -340,11 +386,20 @@ def predict_causal(
 
         if train_dataset:
             print(f"Finetuning {ckpt} on {len(train_dataset[lang])} items ...")
-            finetune_causal(model, tokenizer, cfg, train_dataset[lang], lang, device)
+            tokenizer.padding_side = "right"  # the digit sits at the end of the real tokens
+            finetune(
+                model,
+                cfg,
+                train_dataset[lang],
+                lang,
+                device,
+                lambda rows: causal_batch(cfg, rows, tokenizer, lang, device),
+            )
+            tokenizer.padding_side = "left"
 
         for start in range(0, len(subset), bs):
             batch = subset[start : start + bs]
-            prompts = causal_prompts(cfg, batch, tokenizer, lang)
+            prompts = plain_prompts(cfg, batch, tokenizer, lang)
             enc = tokenizer(
                 prompts,
                 padding=True,
@@ -381,6 +436,77 @@ def predict_causal(
     return results
 
 
+@torch.no_grad()
+def predict_cls(
+    cfg: dict[str, Any],
+    dataset: dict[str, list[dict[str, Any]]],
+    device: str,
+    train_dataset: dict[str, list[dict[str, Any]]] | None = None,
+) -> list[dict[str, Any]]:
+    """Classification head over the [CLS] position."""
+    track = cfg["track"]
+    model_sel = cfg["model"]
+    labels = TRACK_LABELS[track]
+    bs = cfg["batch_size"]
+
+    if not train_dataset:
+        raise ValueError(
+            f"model={model_sel!r} needs `train_path`: the classification head is "
+            f"randomly initialised, so without fine-tuning it predicts noise"
+        )
+
+    results: list[dict[str, Any]] = []
+    for lang, subset in dataset.items():
+        ckpt = checkpoint_id(model_sel, lang)
+        print(f"Loading {ckpt} (cls) on {device} ...")
+        tokenizer = AutoTokenizer.from_pretrained(ckpt, trust_remote_code=True)
+        # the head reads position 0, so padding must not displace [CLS]; the tokenizer
+        # re-adds [CLS] after truncating, so cut from the left to keep the answer
+        tokenizer.padding_side = "right"
+        tokenizer.truncation_side = "left"
+        model = AutoModelForSequenceClassification.from_pretrained(
+            ckpt,
+            trust_remote_code=True,
+            use_safetensors=False,
+            num_labels=len(labels),
+        )
+        model.to(device)
+        patch_masked_softmax(model)
+
+        print(f"Finetuning {ckpt} on {len(train_dataset[lang])} items ...")
+        finetune(
+            model,
+            cfg,
+            train_dataset[lang],
+            lang,
+            device,
+            lambda rows: cls_batch(cfg, rows, tokenizer, lang, device),
+        )
+
+        for start in range(0, len(subset), bs):
+            batch = subset[start : start + bs]
+            enc = tokenizer(
+                plain_prompts(cfg, batch, tokenizer, lang),
+                padding=True,
+                truncation=True,
+                max_length=cfg["max_length"],
+                return_tensors="pt",
+            ).to(device)
+            probs = torch.softmax(model(**enc).logits, dim=-1)
+
+            for row, it in enumerate(batch):
+                idx = int(torch.argmax(probs[row]).item())
+                results.append(
+                    {
+                        "id": it["id"],
+                        "label": labels[idx],
+                        "misc": {"model": ckpt, "probs": probs[row].tolist()},
+                    }
+                )
+            del enc, probs
+    return results
+
+
 def predict(
     cfg: dict[str, Any], 
     dataset: dict[str, list[dict[str, Any]]],
@@ -396,6 +522,8 @@ def predict(
     print(f"Predicting with {method} on {device} ...")
     if method == "mlm":
         return predict_mlm(cfg, dataset, device, train_dataset=train_dataset)
+    if method == "cls":
+        return predict_cls(cfg, dataset, device, train_dataset=train_dataset)
     if method in ("e2e", "instruction_tune"):
         return predict_causal(cfg, dataset, device, train_dataset=train_dataset)
     raise NotImplementedError(
