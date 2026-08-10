@@ -1,5 +1,5 @@
-train_path = "data/trainset/train.rubric.json"
-eval_path = "data/devset/dev.rubric.json"
+train_path = "data/translated/train.rubric.json"
+eval_path = "data/translated/dev.rubric.json"
 track = "rubric"
 prompt = "rubric/examples"
 

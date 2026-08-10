@@ -1,4 +1,4 @@
-eval_path = "data/devset/dev.rubric.json"
+eval_path = "data/translated/dev.rubric.json"
 track = "rubric"
 prompt = "rubric/examples"
 
