@@ -1,6 +1,6 @@
 [project]
 name = "sensemaking-hplt"
-version = "1.0.1"
+version = "1.0.2"
 description = "Sensemaking 2026 Shared Task using HPLT models."
 readme = "README.md"
 requires-python = ">=3.14"
