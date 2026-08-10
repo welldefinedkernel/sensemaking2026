@@ -31,12 +31,15 @@ def domain_of(fileid: str) -> str:
     return re.sub(r"-\d+$", "", segs[0]) if segs else "unknown"
 
 
-def load_pool(track: str) -> list[dict]:
-    """Pooled rows from both released files, with ids made globally unique."""
+def load_pool(track: str, source: str | None = None) -> list[dict]:
+    """Pooled rows from both input files, with ids made globally unique."""
     rows = []
-    sources = [("train", f"trainset/train.{track}.json"), ("dev", f"devset/dev.{track}.json")]
+    if source:
+        sources = [("train", f"{source}/train.{track}.json"), ("dev", f"{source}/dev.{track}.json")]
+    else:
+        sources = [("train", f"data/trainset/train.{track}.json"), ("dev", f"data/devset/dev.{track}.json")]
     for src, rel in sources:
-        for it in json.loads((ROOT / "data" / rel).read_text(encoding="utf-8")):
+        for it in json.loads((ROOT / rel).read_text(encoding="utf-8")):
             rows.append(
                 {
                     # released ids are only unique within a file: 1256 collide across the two
@@ -126,11 +129,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--track", default="simple", choices=["simple", "rubric"])
     parser.add_argument("--seed", type=int, default=13)
+    parser.add_argument("--source", default=None, help="Directory holding train.<track>.json and dev.<track>.json.")
     parser.add_argument("--out", default="data/balanced")
     args = parser.parse_args()
 
     rng = random.Random(args.seed)
-    rows = load_pool(args.track)
+    rows = load_pool(args.track, args.source)
     groups = question_groups(rows)
 
     sizes = collections.Counter(r["domain"] for r in rows)
