@@ -1,4 +1,4 @@
-# Sensemaking 2026 — HPLT baselines
+# Sensemaking 2026
 
 Answer-grading systems for the Sensemaking shared task, built on monolingual HPLT encoders.
 
